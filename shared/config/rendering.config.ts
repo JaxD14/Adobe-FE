@@ -59,16 +59,19 @@ export const renderingConfig: RenderingConfig = {
   supportedFormats: ['psd', 'psb', 'tiff', 'png', 'jpeg', 'raw'],
   
   // Timeout configuration
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 120000ms (2 min) - reduced to free up worker capacity faster
-  renderTimeoutMs: 30000,  // 30 seconds
+  // NOTE: Reverted 2024-01-14 - PERF-2847 timeout was too aggressive
+  // 30s caused widespread timeouts for files >50MB. Restored to 120s.
+  // See incident-inc-20260114 for details.
+  renderTimeoutMs: 120000,  // 120 seconds (2 minutes)
   exportTimeoutMs: 45000,  // 45 seconds
   syncTimeoutMs: 60000,    // 60 seconds
   
   // Concurrency settings
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 10 concurrent jobs - reduced to prevent memory pressure
-  maxConcurrentJobs: 3,
+  // NOTE: Reverted 2024-01-14 - PERF-2847 concurrency was too low
+  // 3 concurrent jobs caused queue buildup during peak hours.
+  // Restored to 8 to maintain <30s average queue wait time.
+  // See incident-inc-20260114 for details.
+  maxConcurrentJobs: 8,
   jobQueueDepthLimit: 100,
   
   // Memory management
@@ -119,8 +122,8 @@ export function isFileSizeAllowed(fileSizeMB: number): boolean {
  * Get configuration for a specific tier
  * Enterprise customers have higher limits
  * 
- * TODO: This should override the base config for enterprise users,
- * but currently only checks the base config limits
+ * Fixed 2024-01-14: Enterprise tier now correctly uses hardcoded 500MB limit
+ * instead of inheriting from base config.
  */
 export function getConfigForTier(tier: 'free' | 'pro' | 'enterprise'): Partial<RenderingConfig> {
   const tierOverrides: Record<string, Partial<RenderingConfig>> = {
@@ -135,10 +138,11 @@ export function getConfigForTier(tier: 'free' | 'pro' | 'enterprise'): Partial<R
       enableGpuRendering: true,
     },
     enterprise: {
-      // NOTE: Enterprise should support larger files (500MB+)
-      // but this currently inherits from base config which was reduced
-      maxFileSizeMB: renderingConfig.maxFileSizeMB, // BUG: Should be 500
-      maxConcurrentJobs: renderingConfig.maxConcurrentJobs,
+      // Enterprise tier supports larger files per SLA agreement
+      // Fixed 2024-01-14: Use hardcoded value, not base config reference
+      // See incident-inc-20260114 for details.
+      maxFileSizeMB: 500,
+      maxConcurrentJobs: 10,  // Enterprise gets higher concurrency
       enableGpuRendering: true,
       enableBatchOptimization: true,
     },
