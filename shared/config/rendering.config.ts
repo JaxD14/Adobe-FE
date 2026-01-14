@@ -86,6 +86,31 @@ export const renderingConfig: RenderingConfig = {
 };
 
 /**
+ * Tier-specific file size limits (in MB)
+ * These are contractual SLA commitments and should not be reduced without
+ * customer notification and approval.
+ * 
+ * FIXED: 2024-01-14 - Added explicit tier limits (issue ADO-6)
+ */
+export const TIER_FILE_SIZE_LIMITS: Record<'free' | 'pro' | 'enterprise', number> = {
+  free: 50,
+  pro: 200,
+  enterprise: 500,
+};
+
+/**
+ * Tier-specific timeout multipliers
+ * Higher tiers get longer timeouts to support larger files
+ * 
+ * FIXED: 2024-01-14 - Added tier timeout multipliers (issue ADO-6)
+ */
+export const TIER_TIMEOUT_MULTIPLIERS: Record<'free' | 'pro' | 'enterprise', number> = {
+  free: 1,
+  pro: 2,
+  enterprise: 4,
+};
+
+/**
  * Get timeout for a specific operation based on file size
  * 
  * NOTE: This function was added to provide dynamic timeouts, but the base
@@ -110,35 +135,63 @@ export function getTimeoutForFileSize(fileSizeMB: number, operation: 'render' | 
 
 /**
  * Check if a file exceeds the maximum allowed size
+ * 
+ * @param fileSizeMB - File size in megabytes
+ * @param tier - Optional user tier for tier-specific limits (defaults to base config)
+ * 
+ * FIXED: 2024-01-14 - Added tier parameter for tier-specific limits (issue ADO-6)
  */
-export function isFileSizeAllowed(fileSizeMB: number): boolean {
+export function isFileSizeAllowed(fileSizeMB: number, tier?: 'free' | 'pro' | 'enterprise'): boolean {
+  if (tier) {
+    return fileSizeMB <= TIER_FILE_SIZE_LIMITS[tier];
+  }
   return fileSizeMB <= renderingConfig.maxFileSizeMB;
 }
 
 /**
- * Get configuration for a specific tier
- * Enterprise customers have higher limits
+ * Get timeout for a specific operation based on file size AND user tier
  * 
- * TODO: This should override the base config for enterprise users,
- * but currently only checks the base config limits
+ * FIXED: 2024-01-14 - Added tier-aware timeout calculation (issue ADO-6)
+ */
+export function getTimeoutForFileSizeAndTier(
+  fileSizeMB: number,
+  operation: 'render' | 'export' | 'sync',
+  tier: 'free' | 'pro' | 'enterprise'
+): number {
+  const baseTimeout = getTimeoutForFileSize(fileSizeMB, operation);
+  const multiplier = TIER_TIMEOUT_MULTIPLIERS[tier];
+  return baseTimeout * multiplier;
+}
+
+/**
+ * Get configuration for a specific tier
+ * Enterprise customers have higher limits per SLA agreements
+ * 
+ * FIXED: 2024-01-14 - Now uses explicit tier limits instead of inheriting
+ * from base config which was reduced in PERF-2847 (issue ADO-6)
  */
 export function getConfigForTier(tier: 'free' | 'pro' | 'enterprise'): Partial<RenderingConfig> {
   const tierOverrides: Record<string, Partial<RenderingConfig>> = {
     free: {
-      maxFileSizeMB: 50,
+      maxFileSizeMB: TIER_FILE_SIZE_LIMITS.free,
       maxConcurrentJobs: 1,
+      renderTimeoutMs: renderingConfig.renderTimeoutMs * TIER_TIMEOUT_MULTIPLIERS.free,
+      syncTimeoutMs: renderingConfig.syncTimeoutMs * TIER_TIMEOUT_MULTIPLIERS.free,
       enableGpuRendering: false,
     },
     pro: {
-      maxFileSizeMB: renderingConfig.maxFileSizeMB, // Uses base config
+      maxFileSizeMB: TIER_FILE_SIZE_LIMITS.pro,
       maxConcurrentJobs: 2,
+      renderTimeoutMs: renderingConfig.renderTimeoutMs * TIER_TIMEOUT_MULTIPLIERS.pro,
+      syncTimeoutMs: renderingConfig.syncTimeoutMs * TIER_TIMEOUT_MULTIPLIERS.pro,
       enableGpuRendering: true,
     },
     enterprise: {
-      // NOTE: Enterprise should support larger files (500MB+)
-      // but this currently inherits from base config which was reduced
-      maxFileSizeMB: renderingConfig.maxFileSizeMB, // BUG: Should be 500
-      maxConcurrentJobs: renderingConfig.maxConcurrentJobs,
+      // Enterprise SLA guarantees: 500MB files, extended timeouts, GPU rendering
+      maxFileSizeMB: TIER_FILE_SIZE_LIMITS.enterprise,
+      maxConcurrentJobs: 5,
+      renderTimeoutMs: renderingConfig.renderTimeoutMs * TIER_TIMEOUT_MULTIPLIERS.enterprise,
+      syncTimeoutMs: renderingConfig.syncTimeoutMs * TIER_TIMEOUT_MULTIPLIERS.enterprise,
       enableGpuRendering: true,
       enableBatchOptimization: true,
     },

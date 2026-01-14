@@ -6,8 +6,8 @@
  * @owner platform-team
  */
 
-import { renderingConfig, isFileSizeAllowed } from '../config/rendering.config';
-import { FileMetadata, SupportedFormat, ErrorCode, ServiceError } from '../types/common';
+import { renderingConfig, isFileSizeAllowed, TIER_FILE_SIZE_LIMITS } from '../config/rendering.config';
+import { FileMetadata, SupportedFormat, ErrorCode, ServiceError, UserTier } from '../types/common';
 import { createLogger } from './logger';
 
 const logger = createLogger('file-utils');
@@ -16,31 +16,46 @@ const logger = createLogger('file-utils');
  * Validate file before processing
  * 
  * Checks:
- * - File size against configured limits
+ * - File size against configured limits (tier-aware if tier provided)
  * - Format is supported
  * - Basic file integrity
+ * 
+ * FIXED: 2024-01-14 - Added tier parameter for tier-specific limits (issue ADO-6)
+ * 
+ * @param file - File metadata to validate
+ * @param tier - Optional user tier for tier-specific size limits
  */
-export function validateFile(file: FileMetadata): { valid: boolean; error?: ServiceError } {
+export function validateFile(
+  file: FileMetadata,
+  tier?: UserTier
+): { valid: boolean; error?: ServiceError } {
   const requestId = `val-${Date.now()}`;
   
-  // Check file size
-  if (!isFileSizeAllowed(file.sizeMB)) {
+  // Get the applicable file size limit
+  const maxAllowedMB = tier ? TIER_FILE_SIZE_LIMITS[tier] : renderingConfig.maxFileSizeMB;
+  
+  // Check file size against tier-specific limit if provided
+  if (!isFileSizeAllowed(file.sizeMB, tier)) {
     logger.warn('File size exceeds limit', {
       requestId,
       fileId: file.id,
       fileSizeMB: file.sizeMB,
-      maxAllowedMB: renderingConfig.maxFileSizeMB,
+      maxAllowedMB,
+      tier: tier || 'base',
     });
     
     return {
       valid: false,
       error: {
         code: ErrorCode.FILE_TOO_LARGE,
-        message: `File size ${file.sizeMB}MB exceeds maximum allowed size of ${renderingConfig.maxFileSizeMB}MB`,
+        message: `File size ${file.sizeMB}MB exceeds maximum allowed size of ${maxAllowedMB}MB${tier ? ` for ${tier} tier` : ''}`,
         details: {
           actualSize: file.sizeMB,
-          maxAllowed: renderingConfig.maxFileSizeMB,
-          suggestion: 'Consider reducing file size or upgrading to Enterprise tier',
+          maxAllowed: maxAllowedMB,
+          tier: tier || 'base',
+          suggestion: tier !== 'enterprise' 
+            ? 'Consider reducing file size or upgrading to Enterprise tier'
+            : 'Contact support for files exceeding enterprise limits',
         },
         timestamp: new Date(),
         requestId,

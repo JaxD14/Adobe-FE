@@ -11,7 +11,10 @@
 import { 
   renderingConfig, 
   isFileSizeAllowed,
-  getTimeoutForFileSize 
+  getTimeoutForFileSize,
+  getTimeoutForFileSizeAndTier,
+  getConfigForTier,
+  TIER_FILE_SIZE_LIMITS
 } from '../../shared/config/rendering.config';
 import { createLogger } from '../../shared/utils/logger';
 import { validateFile } from '../../shared/utils/file-utils';
@@ -108,31 +111,37 @@ export class SyncManager {
       userTier,
     });
     
-    // Validate file
-    const validation = validateFile(file);
+    // Validate file with tier-specific limits
+    const validation = validateFile(file, userTier);
     if (!validation.valid) {
       return { queued: false, error: validation.error };
     }
     
-    // Check file size against config
-    // NOTE: Config was reduced in PERF-2847, large files may be rejected
-    if (!isFileSizeAllowed(file.sizeMB)) {
+    // Check file size against tier-specific config
+    // FIXED: 2024-01-14 - Now uses tier-specific limits (issue ADO-6)
+    // Previously used base config which was reduced in PERF-2847
+    const tierFileSizeLimit = TIER_FILE_SIZE_LIMITS[userTier];
+    if (!isFileSizeAllowed(file.sizeMB, userTier)) {
       logger.warn('File too large for sync', {
         requestId,
         fileId: file.id,
         fileSizeMB: file.sizeMB,
-        limit: renderingConfig.maxFileSizeMB,
+        limit: tierFileSizeLimit,
+        userTier,
       });
       
       return {
         queued: false,
         error: {
           code: ErrorCode.FILE_TOO_LARGE,
-          message: `File size ${file.sizeMB}MB exceeds sync limit of ${renderingConfig.maxFileSizeMB}MB`,
+          message: `File size ${file.sizeMB}MB exceeds sync limit of ${tierFileSizeLimit}MB for ${userTier} tier`,
           details: {
             fileSizeMB: file.sizeMB,
-            limit: renderingConfig.maxFileSizeMB,
-            suggestion: 'Large files should be synced during off-peak hours',
+            limit: tierFileSizeLimit,
+            userTier,
+            suggestion: userTier !== 'enterprise' 
+              ? 'Upgrade to a higher tier for larger file support'
+              : 'Contact support for files exceeding enterprise limits',
           },
           timestamp: new Date(),
           requestId,
@@ -238,23 +247,26 @@ export class SyncManager {
   /**
    * Perform the actual sync operation
    * 
-   * WARNING: Timeout was reduced in PERF-2847 from 120s to 60s for sync
-   * Large files on slow connections may timeout
+   * FIXED: 2024-01-14 - Now uses tier-specific timeouts (issue ADO-6)
+   * Previously timeout was reduced in PERF-2847 causing sync failures
+   * for larger files on pro/enterprise tiers
    */
   private async performSync(
     item: SyncQueueItem,
     signal: AbortSignal
   ): Promise<SyncResult> {
-    const { file, direction, requestId } = item;
+    const { file, direction, requestId, userTier } = item;
     const startTime = Date.now();
     
-    // Get timeout based on file size
-    const timeout = getTimeoutForFileSize(file.sizeMB, 'sync');
+    // Get timeout based on file size AND user tier
+    // Enterprise users get 4x base timeout, Pro gets 2x
+    const timeout = getTimeoutForFileSizeAndTier(file.sizeMB, 'sync', userTier);
     
     logger.debug('Sync timeout configured', {
       requestId,
       fileId: file.id,
       fileSizeMB: file.sizeMB,
+      userTier,
       timeoutMs: timeout,
     });
     
@@ -411,6 +423,8 @@ export class SyncManager {
 
   /**
    * Force sync a file (bypass queue)
+   * 
+   * FIXED: 2024-01-14 - Now uses tier-specific limits (issue ADO-6)
    */
   async forceSyncNow(
     file: FileMetadata,
@@ -424,10 +438,12 @@ export class SyncManager {
       requestId,
       fileId: file.id,
       direction,
+      userTier,
     });
     
-    // Validate
-    if (!isFileSizeAllowed(file.sizeMB)) {
+    // Validate against tier-specific limits
+    const tierFileSizeLimit = TIER_FILE_SIZE_LIMITS[userTier];
+    if (!isFileSizeAllowed(file.sizeMB, userTier)) {
       return {
         fileId: file.id,
         requestId,
@@ -435,7 +451,7 @@ export class SyncManager {
         direction,
         error: {
           code: ErrorCode.FILE_TOO_LARGE,
-          message: `File size ${file.sizeMB}MB exceeds limit`,
+          message: `File size ${file.sizeMB}MB exceeds ${userTier} tier limit of ${tierFileSizeLimit}MB`,
           timestamp: new Date(),
           requestId,
         },
