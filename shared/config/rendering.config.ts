@@ -47,28 +47,26 @@ export interface RenderingConfig {
  * Last reviewed: 2024-01-15 by @platform-team
  * 
  * CHANGELOG:
+ * - 2024-01-15: Hotfix v2.4.1 - Reverted PERF-2847 aggressive limits (ADO-5)
  * - 2024-01-09: Optimized resource limits for better cluster utilization (PERF-2847)
  * - 2024-01-02: Added progressive loading flag
  * - 2023-12-15: Increased GPU memory limit for 8K support
  */
 export const renderingConfig: RenderingConfig = {
   // File handling limits
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 500MB - reduced to improve cluster utilization
-  maxFileSizeMB: 100,
+  // NOTE: Restored 2024-01-15 - PERF-2847 limits were too aggressive (ADO-5)
+  maxFileSizeMB: 500,
   supportedFormats: ['psd', 'psb', 'tiff', 'png', 'jpeg', 'raw'],
   
   // Timeout configuration
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 120000ms (2 min) - reduced to free up worker capacity faster
-  renderTimeoutMs: 30000,  // 30 seconds
+  // NOTE: Restored 2024-01-15 - 30s timeout caused widespread failures (ADO-5)
+  renderTimeoutMs: 90000,  // 90 seconds (base timeout)
   exportTimeoutMs: 45000,  // 45 seconds
   syncTimeoutMs: 60000,    // 60 seconds
   
   // Concurrency settings
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 10 concurrent jobs - reduced to prevent memory pressure
-  maxConcurrentJobs: 3,
+  // NOTE: Restored 2024-01-15 - 3 concurrent jobs caused queue buildup (ADO-5)
+  maxConcurrentJobs: 8,
   jobQueueDepthLimit: 100,
   
   // Memory management
@@ -88,9 +86,7 @@ export const renderingConfig: RenderingConfig = {
 /**
  * Get timeout for a specific operation based on file size
  * 
- * NOTE: This function was added to provide dynamic timeouts, but the base
- * config values were reduced in PERF-2847. Large files may still timeout
- * if they exceed the new limits.
+ * Scales timeout linearly for larger files to ensure adequate processing time.
  */
 export function getTimeoutForFileSize(fileSizeMB: number, operation: 'render' | 'export' | 'sync'): number {
   const baseTimeouts = {
@@ -117,28 +113,30 @@ export function isFileSizeAllowed(fileSizeMB: number): boolean {
 
 /**
  * Get configuration for a specific tier
- * Enterprise customers have higher limits
+ * Enterprise customers have higher limits per SLA
  * 
- * TODO: This should override the base config for enterprise users,
- * but currently only checks the base config limits
+ * NOTE: Uses explicit values instead of inheriting from base config
+ * to ensure tier-specific SLAs are always honored (ADO-5)
  */
 export function getConfigForTier(tier: 'free' | 'pro' | 'enterprise'): Partial<RenderingConfig> {
   const tierOverrides: Record<string, Partial<RenderingConfig>> = {
     free: {
       maxFileSizeMB: 50,
       maxConcurrentJobs: 1,
+      renderTimeoutMs: 60000,  // 60 seconds
       enableGpuRendering: false,
     },
     pro: {
-      maxFileSizeMB: renderingConfig.maxFileSizeMB, // Uses base config
-      maxConcurrentJobs: 2,
+      maxFileSizeMB: 250,  // Explicit limit for pro tier
+      maxConcurrentJobs: 4,
+      renderTimeoutMs: 90000,  // 90 seconds
       enableGpuRendering: true,
     },
     enterprise: {
-      // NOTE: Enterprise should support larger files (500MB+)
-      // but this currently inherits from base config which was reduced
-      maxFileSizeMB: renderingConfig.maxFileSizeMB, // BUG: Should be 500
-      maxConcurrentJobs: renderingConfig.maxConcurrentJobs,
+      // Enterprise SLA guarantees: 500MB files, 180s timeout
+      maxFileSizeMB: 500,
+      maxConcurrentJobs: 10,
+      renderTimeoutMs: 180000,  // 180 seconds for enterprise SLA
       enableGpuRendering: true,
       enableBatchOptimization: true,
     },

@@ -6,9 +6,9 @@
  * @owner ps-rendering-eng
  */
 
-import { renderingConfig } from '../../shared/config/rendering.config';
+import { renderingConfig, getConfigForTier, getTimeoutForFileSize } from '../../shared/config/rendering.config';
 import { createLogger } from '../../shared/utils/logger';
-import { JobStatus, ErrorCode, ServiceError } from '../../shared/types/common';
+import { JobStatus, ErrorCode, ServiceError, UserTier } from '../../shared/types/common';
 import { RenderRequest, QueuedRenderJob, RenderResult } from './types';
 
 const logger = createLogger('job-queue');
@@ -90,8 +90,6 @@ class RenderJobQueue {
    */
   private async processNext(): Promise<void> {
     // Check if we can process more jobs
-    // NOTE: maxConcurrentJobs was reduced in PERF-2847 from 10 to 3
-    // This may cause jobs to wait longer in queue
     if (this.activeJobs.size >= renderingConfig.maxConcurrentJobs) {
       logger.debug('At max concurrent jobs, waiting', {
         activeJobs: this.activeJobs.size,
@@ -129,20 +127,53 @@ class RenderJobQueue {
   }
 
   /**
-   * Execute job with configured timeout
+   * Calculate dynamic timeout based on file size and user tier
    * 
-   * WARNING: Timeout was reduced in PERF-2847 from 120s to 30s
-   * Large files may timeout before rendering completes
+   * Enterprise users get longer timeouts per SLA (ADO-5)
+   */
+  private calculateTimeout(fileSizeMB: number, userTier: UserTier): number {
+    // Get tier-specific base timeout
+    const tierConfig = getConfigForTier(userTier);
+    const tierBaseTimeout = tierConfig.renderTimeoutMs || renderingConfig.renderTimeoutMs;
+    
+    // Calculate file-size-adjusted timeout
+    const fileSizeTimeout = getTimeoutForFileSize(fileSizeMB, 'render');
+    
+    // Use the larger of tier-specific or file-size-adjusted timeout
+    const calculatedTimeout = Math.max(tierBaseTimeout, fileSizeTimeout);
+    
+    logger.debug('Calculated dynamic timeout', {
+      userTier,
+      fileSizeMB,
+      tierBaseTimeout,
+      fileSizeTimeout,
+      calculatedTimeout,
+    });
+    
+    return calculatedTimeout;
+  }
+
+  /**
+   * Execute job with dynamic timeout based on file size and user tier
+   * 
+   * Timeout is calculated dynamically to ensure adequate processing time
+   * for large files while respecting tier-specific SLAs (ADO-5)
    */
   private async executeWithTimeout(job: QueuedRenderJob): Promise<RenderResult> {
-    const timeoutMs = renderingConfig.renderTimeoutMs;
     const requestId = job.request.requestId;
+    const userTier = job.request.userTier;
+    const fileSizeMB = job.request.file.sizeMB;
     
-    logger.debug('Starting job with timeout', {
+    // Calculate dynamic timeout based on file size AND user tier
+    const timeoutMs = this.calculateTimeout(fileSizeMB, userTier);
+    
+    logger.info('Starting job with tier-aware timeout', {
       requestId,
       jobId: job.request.jobId,
+      userTier,
+      fileSizeMB,
       timeoutMs,
-      fileSizeMB: job.request.file.sizeMB,
+      layerCount: job.request.file.layerCount,
     });
     
     return new Promise((resolve, reject) => {
@@ -151,19 +182,24 @@ class RenderJobQueue {
         logger.error('Job timed out', {
           requestId,
           jobId: job.request.jobId,
+          userTier,
           timeoutMs,
-          fileSizeMB: job.request.file.sizeMB,
-          // This log helps identify the issue - large files hit the reduced timeout
-          timeoutPerMB: timeoutMs / job.request.file.sizeMB,
+          fileSizeMB,
+          layerCount: job.request.file.layerCount,
+          timeoutPerMB: Math.round(timeoutMs / fileSizeMB),
+          fileFormat: job.request.file.format,
         });
         
         reject({
           code: ErrorCode.RENDER_TIMEOUT,
           message: `Render job timed out after ${timeoutMs}ms`,
           details: {
-            fileSizeMB: job.request.file.sizeMB,
+            fileSizeMB,
             timeoutMs,
-            suggestion: 'File may be too large for current timeout configuration',
+            userTier,
+            suggestion: userTier !== 'enterprise' 
+              ? 'Consider upgrading to enterprise tier for extended timeout support'
+              : 'File exceeds maximum processing capacity. Please contact support.',
           },
         });
       }, timeoutMs);
