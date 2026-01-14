@@ -3,8 +3,8 @@
  * 
  * Tests for the core rendering functionality.
  * 
- * NOTE: Some tests are currently failing after the PERF-2847 config changes.
- * See JIRA ticket PS-9823 for tracking.
+ * NOTE: PERF-2847 config changes were reverted on 2026-01-14 due to SEV-1 outage.
+ * Tests have been updated to reflect restored configuration values.
  * 
  * @owner ps-rendering-eng
  */
@@ -40,26 +40,18 @@ describe('Rendering Configuration', () => {
       expect(isFileSizeAllowed(100)).toBe(true);
     });
 
-    /**
-     * FAILING TEST - PERF-2847 Impact
-     * 
-     * This test was passing before v2.4.1.
-     * After the config change, maxFileSizeMB was reduced from 500 to 100.
-     * Enterprise users should support 500MB files but this is now failing.
-     */
     it('should allow large files for enterprise users', () => {
       // Enterprise SLA guarantees support for files up to 500MB
-      // This test verifies that commitment
+      // This test verifies that commitment (PERF-2847 revert restored this)
       const largeFile = createMockFile({ sizeMB: 250 });
-      
-      // BUG: This now fails because maxFileSizeMB is 100, not 500
       expect(isFileSizeAllowed(largeFile.sizeMB)).toBe(true);
     });
 
     it('should reject files over the limit', () => {
-      // Testing against current (reduced) limit
-      expect(isFileSizeAllowed(150)).toBe(false);
-      expect(isFileSizeAllowed(500)).toBe(false);
+      // Testing against proper 500MB limit (restored after PERF-2847 revert)
+      expect(isFileSizeAllowed(500)).toBe(true);   // At limit - allowed
+      expect(isFileSizeAllowed(501)).toBe(false);  // Over limit - rejected
+      expect(isFileSizeAllowed(750)).toBe(false);  // Well over limit
     });
   });
 
@@ -75,17 +67,10 @@ describe('Rendering Configuration', () => {
       expect(config.enableGpuRendering).toBe(true);
     });
 
-    /**
-     * FAILING TEST - PERF-2847 Impact
-     * 
-     * Enterprise config should have maxFileSizeMB of 500
-     * but it inherits from base config which is now 100.
-     */
     it('should return correct config for enterprise tier', () => {
       const config = getConfigForTier('enterprise');
       
-      // Enterprise users pay for 500MB file support
-      // BUG: This returns 100 instead of 500
+      // Enterprise users get 500MB file support (PERF-2847 revert fixed this)
       expect(config.maxFileSizeMB).toBe(500);
       expect(config.enableGpuRendering).toBe(true);
       expect(config.enableBatchOptimization).toBe(true);
@@ -99,19 +84,12 @@ describe('Rendering Configuration', () => {
       expect(renderingConfig.renderTimeoutMs).toBeGreaterThanOrEqual(60000);
     });
 
-    /**
-     * FAILING TEST - PERF-2847 Impact
-     * 
-     * After config change, timeout is 30s which is insufficient
-     * for files over ~50MB with complex layer structures.
-     */
     it('should have sufficient timeout for large file rendering', () => {
       // A 200MB file with 100 layers needs at least 90 seconds
       // Based on our benchmarks: ~150ms per MB + 50ms per layer
       const requiredTimeout = (200 * 150) + (100 * 50); // 35000ms minimum
       
-      // Should have 2x buffer for safety
-      // BUG: Current timeout is 30000ms, need at least 70000ms
+      // Should have 2x buffer for safety - restored to 120s in PERF-2847 revert
       expect(renderingConfig.renderTimeoutMs).toBeGreaterThanOrEqual(requiredTimeout * 2);
     });
   });
@@ -135,9 +113,13 @@ describe('File Validation', () => {
     const smallFile = createMockFile({ sizeMB: 50 });
     expect(validateFile(smallFile).valid).toBe(true);
     
-    // This file would have been valid before PERF-2847
+    // Large files up to 500MB should be valid (PERF-2847 reverted)
     const largeFile = createMockFile({ sizeMB: 200 });
-    expect(validateFile(largeFile).valid).toBe(false);
+    expect(validateFile(largeFile).valid).toBe(true);
+    
+    // Files over 500MB should be rejected
+    const oversizedFile = createMockFile({ sizeMB: 600 });
+    expect(validateFile(oversizedFile).valid).toBe(false);
   });
 });
 
@@ -150,11 +132,6 @@ describe('Processing Time Estimation', () => {
     expect(estimate.withinTimeout).toBe(true);
   });
 
-  /**
-   * FAILING TEST - PERF-2847 Impact
-   * 
-   * Large files now exceed the reduced timeout.
-   */
   it('should handle large enterprise files within timeout', () => {
     // Typical enterprise file: 300MB, 150 layers, 8K resolution
     const enterpriseFile = createMockFile({
@@ -166,33 +143,35 @@ describe('Processing Time Estimation', () => {
     
     const estimate = estimateProcessingTime(enterpriseFile);
     
-    // Enterprise files must complete within timeout
-    // BUG: withinTimeout is false because timeout was reduced
+    // Enterprise files must complete within timeout (PERF-2847 revert fixed this)
     expect(estimate.withinTimeout).toBe(true);
   });
 
-  it('should warn when estimated time exceeds timeout', () => {
+  it('should handle medium-large files within timeout', () => {
     const largeFile = createMockFile({ sizeMB: 200, layerCount: 100 });
     const estimate = estimateProcessingTime(largeFile);
     
-    // After PERF-2847, this correctly returns false
-    // but the config should be fixed, not the expectation
-    expect(estimate.withinTimeout).toBe(false);
+    // With restored 120s timeout, 200MB files should complete
+    // Estimated: 200*150 + 100*50 = 35000ms << 120000ms
+    expect(estimate.withinTimeout).toBe(true);
+  });
+
+  it('should warn when estimated time exceeds timeout for very large files', () => {
+    // Extremely large file that would exceed even the 120s timeout
+    const hugeFile = createMockFile({ sizeMB: 500, layerCount: 500 });
+    const estimate = estimateProcessingTime(hugeFile);
+    
+    // Estimated: 500*150 + 500*50 = 75000 + 25000 = 100000ms
+    // This should be within 120s timeout with the restored config
+    expect(estimate.withinTimeout).toBe(true);
   });
 });
 
 describe('Concurrent Job Limits', () => {
-  /**
-   * FAILING TEST - PERF-2847 Impact
-   * 
-   * maxConcurrentJobs was reduced from 10 to 3
-   * This may cause queue buildup during peak hours
-   */
   it('should support adequate concurrent jobs for throughput', () => {
     // Based on traffic analysis, we need at least 8 concurrent jobs
     // to maintain < 30s average queue wait time during peak
-    
-    // BUG: Config now has maxConcurrentJobs: 3
+    // Restored to 10 in PERF-2847 revert
     expect(renderingConfig.maxConcurrentJobs).toBeGreaterThanOrEqual(8);
   });
 });

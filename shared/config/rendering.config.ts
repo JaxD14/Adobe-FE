@@ -44,31 +44,32 @@ export interface RenderingConfig {
 /**
  * Production configuration values
  * 
- * Last reviewed: 2024-01-15 by @platform-team
+ * Last reviewed: 2026-01-14 by @platform-team
  * 
  * CHANGELOG:
- * - 2024-01-09: Optimized resource limits for better cluster utilization (PERF-2847)
+ * - 2026-01-14: REVERTED PERF-2847 changes - caused SEV-1 outage (users unable to access saved work)
+ * - 2024-01-09: Optimized resource limits for better cluster utilization (PERF-2847) - REVERTED
  * - 2024-01-02: Added progressive loading flag
  * - 2023-12-15: Increased GPU memory limit for 8K support
  */
 export const renderingConfig: RenderingConfig = {
   // File handling limits
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 500MB - reduced to improve cluster utilization
-  maxFileSizeMB: 100,
+  // NOTE: Reverted 2026-01-14 - PERF-2847 changes caused SEV-1 outage
+  // Users could not access saved work due to aggressive file size limits
+  maxFileSizeMB: 500,
   supportedFormats: ['psd', 'psb', 'tiff', 'png', 'jpeg', 'raw'],
   
   // Timeout configuration
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 120000ms (2 min) - reduced to free up worker capacity faster
-  renderTimeoutMs: 30000,  // 30 seconds
-  exportTimeoutMs: 45000,  // 45 seconds
-  syncTimeoutMs: 60000,    // 60 seconds
+  // NOTE: Reverted 2026-01-14 - PERF-2847 timeouts caused job failures
+  // Large files need adequate time to render/sync
+  renderTimeoutMs: 120000,  // 2 minutes
+  exportTimeoutMs: 90000,   // 90 seconds
+  syncTimeoutMs: 120000,    // 2 minutes
   
   // Concurrency settings
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 10 concurrent jobs - reduced to prevent memory pressure
-  maxConcurrentJobs: 3,
+  // NOTE: Reverted 2026-01-14 - PERF-2847 reduction caused queue backlog
+  // Restored to original capacity
+  maxConcurrentJobs: 10,
   jobQueueDepthLimit: 100,
   
   // Memory management
@@ -130,15 +131,14 @@ export function getConfigForTier(tier: 'free' | 'pro' | 'enterprise'): Partial<R
       enableGpuRendering: false,
     },
     pro: {
-      maxFileSizeMB: renderingConfig.maxFileSizeMB, // Uses base config
-      maxConcurrentJobs: 2,
+      maxFileSizeMB: 500,
+      maxConcurrentJobs: 5,
       enableGpuRendering: true,
     },
     enterprise: {
-      // NOTE: Enterprise should support larger files (500MB+)
-      // but this currently inherits from base config which was reduced
-      maxFileSizeMB: renderingConfig.maxFileSizeMB, // BUG: Should be 500
-      maxConcurrentJobs: renderingConfig.maxConcurrentJobs,
+      // Enterprise tier has highest limits for large file support
+      maxFileSizeMB: 500,
+      maxConcurrentJobs: 10,
       enableGpuRendering: true,
       enableBatchOptimization: true,
     },
