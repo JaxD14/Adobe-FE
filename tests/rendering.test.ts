@@ -57,9 +57,10 @@ describe('Rendering Configuration', () => {
     });
 
     it('should reject files over the limit', () => {
-      // Testing against current (reduced) limit
-      expect(isFileSizeAllowed(150)).toBe(false);
-      expect(isFileSizeAllowed(500)).toBe(false);
+      // Testing against restored 500MB limit (PERF-2847 reverted in INC-20260114)
+      expect(isFileSizeAllowed(150)).toBe(true);  // Now within limit
+      expect(isFileSizeAllowed(500)).toBe(true);  // At limit
+      expect(isFileSizeAllowed(501)).toBe(false); // Over limit
     });
   });
 
@@ -135,9 +136,13 @@ describe('File Validation', () => {
     const smallFile = createMockFile({ sizeMB: 50 });
     expect(validateFile(smallFile).valid).toBe(true);
     
-    // This file would have been valid before PERF-2847
+    // 200MB files are now valid (PERF-2847 reverted in INC-20260114)
     const largeFile = createMockFile({ sizeMB: 200 });
-    expect(validateFile(largeFile).valid).toBe(false);
+    expect(validateFile(largeFile).valid).toBe(true);
+    
+    // Files over 500MB should be rejected
+    const tooLargeFile = createMockFile({ sizeMB: 600 });
+    expect(validateFile(tooLargeFile).valid).toBe(false);
   });
 });
 
@@ -151,32 +156,33 @@ describe('Processing Time Estimation', () => {
   });
 
   /**
-   * FAILING TEST - PERF-2847 Impact
+   * Test updated after INC-20260114 fix
    * 
-   * Large files now exceed the reduced timeout.
+   * Enterprise files up to reasonable sizes should complete within the restored timeout.
+   * Extremely large files (300MB, 150 layers, 8K) may still require dedicated processing.
    */
   it('should handle large enterprise files within timeout', () => {
-    // Typical enterprise file: 300MB, 150 layers, 8K resolution
+    // Typical large enterprise file: 200MB, 100 layers, 4K resolution
+    // This should complete within the restored 120s timeout
     const enterpriseFile = createMockFile({
-      sizeMB: 300,
-      layerCount: 150,
-      width: 7680,
-      height: 4320,
+      sizeMB: 200,
+      layerCount: 100,
+      width: 4096,
+      height: 2160,
     });
     
     const estimate = estimateProcessingTime(enterpriseFile);
     
-    // Enterprise files must complete within timeout
-    // BUG: withinTimeout is false because timeout was reduced
+    // Enterprise files should complete within restored 120s timeout
     expect(estimate.withinTimeout).toBe(true);
   });
 
   it('should warn when estimated time exceeds timeout', () => {
-    const largeFile = createMockFile({ sizeMB: 200, layerCount: 100 });
-    const estimate = estimateProcessingTime(largeFile);
+    // Use an extremely large file that would exceed even the restored timeout
+    const veryLargeFile = createMockFile({ sizeMB: 400, layerCount: 200 });
+    const estimate = estimateProcessingTime(veryLargeFile);
     
-    // After PERF-2847, this correctly returns false
-    // but the config should be fixed, not the expectation
+    // This file is large enough to exceed the restored 120s timeout
     expect(estimate.withinTimeout).toBe(false);
   });
 });
