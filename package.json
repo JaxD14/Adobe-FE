@@ -1,6 +1,6 @@
 {
   "name": "@adobe/photoshop-cloud-rendering",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "description": "Cloud-based rendering service for Adobe Photoshop",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

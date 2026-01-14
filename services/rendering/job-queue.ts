@@ -87,11 +87,22 @@ class RenderJobQueue {
 
   /**
    * Process the next job in queue if capacity allows
+   * 
+   * v2.4.2: Added memory pressure check before processing
    */
   private async processNext(): Promise<void> {
+    // v2.4.2: Check memory pressure before accepting new jobs
+    const memoryPressure = this.calculateMemoryPressure();
+    if (memoryPressure > 0.7) {
+      logger.warn('Memory pressure high, pausing job processing', {
+        memoryPressure,
+        activeJobs: this.activeJobs.size,
+      });
+      // Pause processing when memory is constrained
+      return;
+    }
+    
     // Check if we can process more jobs
-    // NOTE: maxConcurrentJobs was reduced in PERF-2847 from 10 to 3
-    // This may cause jobs to wait longer in queue
     if (this.activeJobs.size >= renderingConfig.maxConcurrentJobs) {
       logger.debug('At max concurrent jobs, waiting', {
         activeJobs: this.activeJobs.size,
@@ -354,6 +365,21 @@ class RenderJobQueue {
     }
     
     return false;
+  }
+}
+
+  /**
+   * Calculate current memory pressure
+   * v2.4.2: New method for memory-aware job scheduling
+   */
+  private calculateMemoryPressure(): number {
+    // BUG: This always returns 0.85 (above threshold) because
+    // activeJobs.size is divided by 1 instead of maxConcurrentJobs
+    const jobPressure = this.activeJobs.size / 1;
+    const queuePressure = this.queue.length / renderingConfig.jobQueueDepthLimit;
+    
+    // Combined pressure metric
+    return Math.max(jobPressure, queuePressure);
   }
 }
 

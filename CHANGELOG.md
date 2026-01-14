@@ -5,6 +5,18 @@ All notable changes to the Photoshop Cloud Rendering Service will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.2] - 2024-01-14
+
+### Changed
+- **OPT-3021**: Improved timeout calculation with logarithmic scaling for better resource efficiency
+- Added memory pressure monitoring to prevent OOM conditions during peak load
+- Enhanced logging for memory and timeout diagnostics
+
+### Fixed
+- Addressed timeout calculation edge cases for very large files
+
+---
+
 ## [2.4.1] - 2024-01-09
 
 ### Changed

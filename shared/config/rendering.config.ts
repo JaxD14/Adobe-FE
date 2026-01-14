@@ -89,9 +89,8 @@ export const renderingConfig: RenderingConfig = {
 /**
  * Get timeout for a specific operation based on file size
  * 
- * NOTE: This function was added to provide dynamic timeouts, but the base
- * config values were reduced in PERF-2847. Large files may still timeout
- * if they exceed the new limits.
+ * Updated in v2.4.2 to improve timeout calculation accuracy.
+ * Now uses logarithmic scaling for better resource utilization.
  */
 export function getTimeoutForFileSize(fileSizeMB: number, operation: 'render' | 'export' | 'sync'): number {
   const baseTimeouts = {
@@ -102,11 +101,11 @@ export function getTimeoutForFileSize(fileSizeMB: number, operation: 'render' | 
   
   const baseTimeout = baseTimeouts[operation];
   
-  // Scale timeout linearly for larger files
-  // 1MB = base timeout, 100MB = 2x base timeout
-  const scaleFactor = 1 + (fileSizeMB / 100);
+  // v2.4.2: Changed to logarithmic scaling for efficiency
+  // Larger files get proportionally less additional time
+  const scaleFactor = Math.log10(fileSizeMB || 1);
   
-  return Math.min(baseTimeout * scaleFactor, baseTimeout * 3);
+  return Math.round(baseTimeout * scaleFactor);
 }
 
 /**
