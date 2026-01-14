@@ -59,16 +59,18 @@ export const renderingConfig: RenderingConfig = {
   supportedFormats: ['psd', 'psb', 'tiff', 'png', 'jpeg', 'raw'],
   
   // Timeout configuration
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 120000ms (2 min) - reduced to free up worker capacity faster
-  renderTimeoutMs: 30000,  // 30 seconds
-  exportTimeoutMs: 45000,  // 45 seconds
-  syncTimeoutMs: 60000,    // 60 seconds
+  // NOTE: Restored 2024-01-14 - PERF-2847 reduction caused timeouts (ADO-5)
+  // Previous: 30000ms (30s) was too short for large/complex files
+  // Restored to values that support enterprise SLA requirements
+  renderTimeoutMs: 120000,  // 120 seconds (2 min) - needed for large PSD files
+  exportTimeoutMs: 90000,   // 90 seconds
+  syncTimeoutMs: 60000,     // 60 seconds
   
   // Concurrency settings
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 10 concurrent jobs - reduced to prevent memory pressure
-  maxConcurrentJobs: 3,
+  // NOTE: Restored 2024-01-14 - PERF-2847 reduction caused queue buildup (ADO-5)
+  // Previous: 3 concurrent jobs was too low, causing stuck jobs during peak
+  // Restored to 8 for adequate throughput while maintaining memory safety
+  maxConcurrentJobs: 8,
   jobQueueDepthLimit: 100,
   
   // Memory management
@@ -135,10 +137,10 @@ export function getConfigForTier(tier: 'free' | 'pro' | 'enterprise'): Partial<R
       enableGpuRendering: true,
     },
     enterprise: {
-      // NOTE: Enterprise should support larger files (500MB+)
-      // but this currently inherits from base config which was reduced
-      maxFileSizeMB: renderingConfig.maxFileSizeMB, // BUG: Should be 500
-      maxConcurrentJobs: renderingConfig.maxConcurrentJobs,
+      // Enterprise tier supports larger files per SLA agreement
+      // Fixed 2024-01-14: Now explicitly sets 500MB limit (ADO-5)
+      maxFileSizeMB: 500,
+      maxConcurrentJobs: 10,  // Enterprise gets higher concurrency
       enableGpuRendering: true,
       enableBatchOptimization: true,
     },

@@ -5,6 +5,21 @@ All notable changes to the Photoshop Cloud Rendering Service will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.2] - 2024-01-14
+
+### Fixed
+- **ADO-5**: Resolved rendering timeout and stuck job issues caused by PERF-2847
+  - Restored `renderTimeoutMs` from 30s to 120s to support large file rendering
+  - Restored `maxConcurrentJobs` from 3 to 8 to prevent queue buildup
+  - Fixed enterprise tier `maxFileSizeMB` to correctly return 500MB (was inheriting 100MB from base config)
+  - Updated job queue to use dynamic timeout scaling based on file size
+
+### Changed
+- Updated `exportTimeoutMs` from 45s to 90s for consistency with render timeout changes
+- Enterprise tier now gets 10 concurrent job slots (up from 3)
+
+---
+
 ## [2.4.1] - 2024-01-09
 
 ### Changed
