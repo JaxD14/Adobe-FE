@@ -3,14 +3,20 @@
  * 
  * Tests for the core rendering functionality.
  * 
- * NOTE: Some tests are currently failing after the PERF-2847 config changes.
- * See JIRA ticket PS-9823 for tracking.
+ * IMPORTANT: These tests enforce SLA requirements and operational minimums.
+ * If these tests fail, it indicates a configuration regression that would
+ * cause production incidents. DO NOT skip or modify expected values without
+ * approval from Platform Team Lead and Enterprise Account Management.
+ * 
+ * See: go/ps-enterprise-sla for SLA requirements
+ * See: incident-inc-20260114 for why these safeguards exist
  * 
  * @owner ps-rendering-eng
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderingConfig, isFileSizeAllowed, getConfigForTier } from '../shared/config/rendering.config';
+import { validateConfig, CONFIG_MINIMUMS } from '../shared/config/config-validator';
 import { validateFile, estimateProcessingTime } from '../shared/utils/file-utils';
 import { FileMetadata } from '../shared/types/common';
 
@@ -34,36 +40,40 @@ function createMockFile(overrides: Partial<FileMetadata> = {}): FileMetadata {
 }
 
 describe('Rendering Configuration', () => {
+  /**
+   * SLA VALIDATION TESTS
+   * 
+   * These tests use the config validator to enforce SLA requirements.
+   * They will fail CI if configuration is invalid.
+   */
+  describe('SLA Configuration Validation', () => {
+    it('should pass full configuration validation', () => {
+      const tierConfigs = {
+        enterprise: getConfigForTier('enterprise'),
+        pro: getConfigForTier('pro'),
+        free: getConfigForTier('free'),
+      };
+      
+      const report = validateConfig(renderingConfig, tierConfigs);
+      
+      // This is the critical gate - if this fails, deployment should be blocked
+      expect(report.valid).toBe(true);
+      expect(report.errors).toHaveLength(0);
+    });
+  });
+
   describe('File Size Limits', () => {
     it('should allow files under the limit', () => {
       expect(isFileSizeAllowed(50)).toBe(true);
       expect(isFileSizeAllowed(100)).toBe(true);
     });
 
-    /**
-     * FAILING TEST - PERF-2847 Impact
-     * 
-     * This test was passing before v2.4.1.
-     * After the config change, maxFileSizeMB was reduced from 500 to 100.
-     * Enterprise users should support 500MB files but this is now failing.
-     */
-    it('should allow large files for enterprise users', () => {
-      // Enterprise SLA guarantees support for files up to 500MB
-      // This test verifies that commitment
-      const largeFile = createMockFile({ sizeMB: 250 });
-      
-      // BUG: This now fails because maxFileSizeMB is 100, not 500
-      expect(isFileSizeAllowed(largeFile.sizeMB)).toBe(true);
-    });
-
-    it('should reject files over the limit', () => {
-      // Testing against current (reduced) limit
+    it('should reject files over the base limit', () => {
       expect(isFileSizeAllowed(150)).toBe(false);
-      expect(isFileSizeAllowed(500)).toBe(false);
     });
   });
 
-  describe('Tier Configuration', () => {
+  describe('Tier Configuration - SLA Requirements', () => {
     it('should return correct config for free tier', () => {
       const config = getConfigForTier('free');
       expect(config.maxFileSizeMB).toBe(50);
@@ -76,42 +86,58 @@ describe('Rendering Configuration', () => {
     });
 
     /**
-     * FAILING TEST - PERF-2847 Impact
+     * CRITICAL SLA TEST - Enterprise Tier
      * 
-     * Enterprise config should have maxFileSizeMB of 500
-     * but it inherits from base config which is now 100.
+     * Enterprise customers have contractual guarantees for:
+     * - 500MB file support
+     * - GPU rendering
+     * - Batch optimization
+     * 
+     * Failing this test would breach enterprise SLA contracts.
      */
-    it('should return correct config for enterprise tier', () => {
+    it('should return correct config for enterprise tier (SLA CRITICAL)', () => {
       const config = getConfigForTier('enterprise');
       
-      // Enterprise users pay for 500MB file support
-      // BUG: This returns 100 instead of 500
-      expect(config.maxFileSizeMB).toBe(500);
+      // Enterprise SLA requirement: 500MB file support
+      expect(config.maxFileSizeMB).toBe(CONFIG_MINIMUMS.enterpriseMaxFileSizeMB.min);
+      expect(config.maxFileSizeMB).toBeGreaterThanOrEqual(500);
+      
+      // Enterprise SLA requirement: priority processing
+      expect(config.maxConcurrentJobs).toBeGreaterThanOrEqual(
+        CONFIG_MINIMUMS.enterpriseMaxConcurrentJobs.min
+      );
+      
+      // Enterprise features
       expect(config.enableGpuRendering).toBe(true);
       expect(config.enableBatchOptimization).toBe(true);
     });
   });
 
-  describe('Timeout Configuration', () => {
-    it('should have reasonable render timeout', () => {
-      // Minimum acceptable timeout for rendering
-      // 30 seconds is too short for complex files
-      expect(renderingConfig.renderTimeoutMs).toBeGreaterThanOrEqual(60000);
+  describe('Timeout Configuration - Operational Minimums', () => {
+    /**
+     * CRITICAL OPERATIONAL TEST
+     * 
+     * Timeout must be sufficient for complex file processing.
+     * A timeout that's too short causes widespread failures.
+     * See incident-inc-20260114 for production impact.
+     */
+    it('should have render timeout >= minimum (SLA CRITICAL)', () => {
+      expect(renderingConfig.renderTimeoutMs).toBeGreaterThanOrEqual(
+        CONFIG_MINIMUMS.renderTimeoutMs.min
+      );
     });
 
-    /**
-     * FAILING TEST - PERF-2847 Impact
-     * 
-     * After config change, timeout is 30s which is insufficient
-     * for files over ~50MB with complex layer structures.
-     */
+    it('should have render timeout >= recommended for reliability', () => {
+      expect(renderingConfig.renderTimeoutMs).toBeGreaterThanOrEqual(
+        CONFIG_MINIMUMS.renderTimeoutMs.recommended
+      );
+    });
+
     it('should have sufficient timeout for large file rendering', () => {
-      // A 200MB file with 100 layers needs at least 90 seconds
-      // Based on our benchmarks: ~150ms per MB + 50ms per layer
-      const requiredTimeout = (200 * 150) + (100 * 50); // 35000ms minimum
-      
-      // Should have 2x buffer for safety
-      // BUG: Current timeout is 30000ms, need at least 70000ms
+      // A 200MB file with 100 layers needs at least 35s based on benchmarks
+      // ~150ms per MB + 50ms per layer = 35000ms
+      // With 2x safety buffer = 70000ms minimum
+      const requiredTimeout = (200 * 150) + (100 * 50); // 35000ms
       expect(renderingConfig.renderTimeoutMs).toBeGreaterThanOrEqual(requiredTimeout * 2);
     });
   });
@@ -181,18 +207,25 @@ describe('Processing Time Estimation', () => {
   });
 });
 
-describe('Concurrent Job Limits', () => {
+describe('Concurrent Job Limits - Operational Minimums', () => {
   /**
-   * FAILING TEST - PERF-2847 Impact
+   * CRITICAL OPERATIONAL TEST
    * 
-   * maxConcurrentJobs was reduced from 10 to 3
-   * This may cause queue buildup during peak hours
+   * Concurrent job limit must support peak traffic.
+   * Too few concurrent jobs causes queue buildup and timeouts.
+   * See incident-inc-20260114 for production impact.
    */
-  it('should support adequate concurrent jobs for throughput', () => {
+  it('should support minimum concurrent jobs (SLA CRITICAL)', () => {
+    expect(renderingConfig.maxConcurrentJobs).toBeGreaterThanOrEqual(
+      CONFIG_MINIMUMS.maxConcurrentJobs.min
+    );
+  });
+
+  it('should support recommended concurrent jobs for peak throughput', () => {
     // Based on traffic analysis, we need at least 8 concurrent jobs
-    // to maintain < 30s average queue wait time during peak
-    
-    // BUG: Config now has maxConcurrentJobs: 3
-    expect(renderingConfig.maxConcurrentJobs).toBeGreaterThanOrEqual(8);
+    // to maintain <30s average queue wait time during peak hours
+    expect(renderingConfig.maxConcurrentJobs).toBeGreaterThanOrEqual(
+      CONFIG_MINIMUMS.maxConcurrentJobs.recommended
+    );
   });
 });

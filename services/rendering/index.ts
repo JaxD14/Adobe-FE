@@ -10,6 +10,8 @@
 
 import { createLogger } from '../../shared/utils/logger';
 import { HealthStatus } from '../../shared/types/common';
+import { renderingConfig, getConfigForTier } from '../../shared/config/rendering.config';
+import { assertConfigValid, generateValidationReport } from '../../shared/config/config-validator';
 import { psdRenderer } from './renderer';
 import { renderJobQueue } from './job-queue';
 
@@ -21,9 +23,43 @@ const logger = createLogger('rendering-service');
 
 /**
  * Service initialization
+ * 
+ * IMPORTANT: This validates configuration at startup to prevent
+ * deploying invalid configs that would cause SLA violations.
+ * See incident-inc-20260114 for why this is critical.
  */
 export async function initializeRenderingService(): Promise<void> {
   logger.info('Initializing rendering service');
+  
+  // Validate configuration before starting
+  // This will throw and prevent startup if config is invalid
+  logger.info('Validating configuration against SLA requirements...');
+  
+  try {
+    const tierConfigs = {
+      enterprise: getConfigForTier('enterprise'),
+      pro: getConfigForTier('pro'),
+      free: getConfigForTier('free'),
+    };
+    
+    assertConfigValid(renderingConfig, tierConfigs);
+    logger.info('Configuration validation passed');
+  } catch (error: any) {
+    logger.error('Configuration validation FAILED', {
+      error: error.message,
+      action: 'Service startup blocked to prevent SLA violations',
+    });
+    
+    // Log the full validation report for debugging
+    const report = generateValidationReport(renderingConfig, {
+      enterprise: getConfigForTier('enterprise'),
+      pro: getConfigForTier('pro'),
+      free: getConfigForTier('free'),
+    });
+    console.error('\n' + report + '\n');
+    
+    throw error;
+  }
   
   // In production, this would:
   // - Connect to GPU cluster
