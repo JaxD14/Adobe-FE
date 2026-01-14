@@ -6,7 +6,7 @@
  * @owner ps-rendering-eng
  */
 
-import { renderingConfig } from '../../shared/config/rendering.config';
+import { renderingConfig, getTimeoutForFileSize, getConfigForTier } from '../../shared/config/rendering.config';
 import { createLogger } from '../../shared/utils/logger';
 import { JobStatus, ErrorCode, ServiceError } from '../../shared/types/common';
 import { RenderRequest, QueuedRenderJob, RenderResult } from './types';
@@ -131,17 +131,28 @@ class RenderJobQueue {
   /**
    * Execute job with configured timeout
    * 
-   * WARNING: Timeout was reduced in PERF-2847 from 120s to 30s
-   * Large files may timeout before rendering completes
+   * Uses dynamic timeout based on file size and user tier for better handling
+   * of large files while maintaining reasonable limits for smaller files.
    */
   private async executeWithTimeout(job: QueuedRenderJob): Promise<RenderResult> {
-    const timeoutMs = renderingConfig.renderTimeoutMs;
+    // Get tier-specific timeout if available, otherwise use dynamic calculation
+    const tierConfig = getConfigForTier(job.request.userTier);
+    const tierTimeout = tierConfig.renderTimeoutMs || renderingConfig.renderTimeoutMs;
+    
+    // Calculate dynamic timeout based on file size
+    const dynamicTimeout = getTimeoutForFileSize(job.request.file.sizeMB, 'render');
+    
+    // Use the larger of tier timeout and dynamic timeout for large files
+    const timeoutMs = Math.max(tierTimeout, dynamicTimeout);
     const requestId = job.request.requestId;
     
     logger.debug('Starting job with timeout', {
       requestId,
       jobId: job.request.jobId,
       timeoutMs,
+      tierTimeout,
+      dynamicTimeout,
+      userTier: job.request.userTier,
       fileSizeMB: job.request.file.sizeMB,
     });
     
@@ -152,8 +163,10 @@ class RenderJobQueue {
           requestId,
           jobId: job.request.jobId,
           timeoutMs,
+          tierTimeout,
+          dynamicTimeout,
+          userTier: job.request.userTier,
           fileSizeMB: job.request.file.sizeMB,
-          // This log helps identify the issue - large files hit the reduced timeout
           timeoutPerMB: timeoutMs / job.request.file.sizeMB,
         });
         
