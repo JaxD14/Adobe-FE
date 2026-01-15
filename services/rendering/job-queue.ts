@@ -6,7 +6,7 @@
  * @owner ps-rendering-eng
  */
 
-import { renderingConfig } from '../../shared/config/rendering.config';
+import { renderingConfig, getTimeoutForFileSize } from '../../shared/config/rendering.config';
 import { createLogger } from '../../shared/utils/logger';
 import { JobStatus, ErrorCode, ServiceError } from '../../shared/types/common';
 import { RenderRequest, QueuedRenderJob, RenderResult } from './types';
@@ -90,8 +90,7 @@ class RenderJobQueue {
    */
   private async processNext(): Promise<void> {
     // Check if we can process more jobs
-    // NOTE: maxConcurrentJobs was reduced in PERF-2847 from 10 to 3
-    // This may cause jobs to wait longer in queue
+    // HOTFIX: maxConcurrentJobs restored to 10 (was reduced to 3 in PERF-2847)
     if (this.activeJobs.size >= renderingConfig.maxConcurrentJobs) {
       logger.debug('At max concurrent jobs, waiting', {
         activeJobs: this.activeJobs.size,
@@ -131,11 +130,12 @@ class RenderJobQueue {
   /**
    * Execute job with configured timeout
    * 
-   * WARNING: Timeout was reduced in PERF-2847 from 120s to 30s
-   * Large files may timeout before rendering completes
+   * HOTFIX: Now uses dynamic timeout based on file size to prevent
+   * large files from timing out prematurely.
    */
   private async executeWithTimeout(job: QueuedRenderJob): Promise<RenderResult> {
-    const timeoutMs = renderingConfig.renderTimeoutMs;
+    // HOTFIX: Use dynamic timeout based on file size instead of static config value
+    const timeoutMs = getTimeoutForFileSize(job.request.file.sizeMB, 'render');
     const requestId = job.request.requestId;
     
     logger.debug('Starting job with timeout', {
@@ -143,6 +143,7 @@ class RenderJobQueue {
       jobId: job.request.jobId,
       timeoutMs,
       fileSizeMB: job.request.file.sizeMB,
+      baseTimeoutMs: renderingConfig.renderTimeoutMs,
     });
     
     return new Promise((resolve, reject) => {
