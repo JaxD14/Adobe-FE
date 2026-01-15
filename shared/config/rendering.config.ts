@@ -59,14 +59,14 @@ export const renderingConfig: RenderingConfig = {
   supportedFormats: ['psd', 'psb', 'tiff', 'png', 'jpeg', 'raw'],
   
   // Timeout configuration
-  // HOTFIX: Reverted from 30s back to 120s - large files were timing out
-  renderTimeoutMs: 120000,  // 120 seconds (2 min)
+  // HOTFIX: Reverted to support large enterprise files (300MB+ with complex layers)
+  renderTimeoutMs: 200000,  // 200 seconds (~3.3 min) for complex files
   exportTimeoutMs: 90000,   // 90 seconds
   syncTimeoutMs: 60000,     // 60 seconds
   
   // Concurrency settings
-  // Keeping reduced concurrency for memory stability, but increased from 3 to 5
-  maxConcurrentJobs: 5,
+  // HOTFIX: Reverted from 3 to 8 - need minimum 8 for acceptable queue wait times
+  maxConcurrentJobs: 8,
   jobQueueDepthLimit: 100,
   
   // Memory management
