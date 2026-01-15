@@ -59,16 +59,15 @@ export const renderingConfig: RenderingConfig = {
   supportedFormats: ['psd', 'psb', 'tiff', 'png', 'jpeg', 'raw'],
   
   // Timeout configuration
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 120000ms (2 min) - reduced to free up worker capacity faster
-  renderTimeoutMs: 30000,  // 30 seconds
+  // NOTE: Restored 2024-01-15 - 30s timeout caused widespread failures (INC-20260115)
+  // PERF-2847 reduction was too aggressive for production file sizes
+  renderTimeoutMs: 120000,  // 120 seconds (2 min)
   exportTimeoutMs: 45000,  // 45 seconds
   syncTimeoutMs: 60000,    // 60 seconds
   
   // Concurrency settings
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 10 concurrent jobs - reduced to prevent memory pressure
-  maxConcurrentJobs: 3,
+  // NOTE: Restored 2024-01-15 - 3 concurrent jobs caused excessive queueing (INC-20260115)
+  maxConcurrentJobs: 8,
   jobQueueDepthLimit: 100,
   
   // Memory management
@@ -135,10 +134,9 @@ export function getConfigForTier(tier: 'free' | 'pro' | 'enterprise'): Partial<R
       enableGpuRendering: true,
     },
     enterprise: {
-      // NOTE: Enterprise should support larger files (500MB+)
-      // but this currently inherits from base config which was reduced
-      maxFileSizeMB: renderingConfig.maxFileSizeMB, // BUG: Should be 500
-      maxConcurrentJobs: renderingConfig.maxConcurrentJobs,
+      // Enterprise tier supports larger files and higher concurrency
+      maxFileSizeMB: 500,
+      maxConcurrentJobs: 10,
       enableGpuRendering: true,
       enableBatchOptimization: true,
     },
