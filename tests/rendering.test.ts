@@ -57,9 +57,9 @@ describe('Rendering Configuration', () => {
     });
 
     it('should reject files over the limit', () => {
-      // Testing against current (reduced) limit
-      expect(isFileSizeAllowed(150)).toBe(false);
-      expect(isFileSizeAllowed(500)).toBe(false);
+      // Files over 500MB should be rejected
+      expect(isFileSizeAllowed(501)).toBe(false);
+      expect(isFileSizeAllowed(600)).toBe(false);
     });
   });
 
@@ -135,8 +135,12 @@ describe('File Validation', () => {
     const smallFile = createMockFile({ sizeMB: 50 });
     expect(validateFile(smallFile).valid).toBe(true);
     
-    // This file would have been valid before PERF-2847
-    const largeFile = createMockFile({ sizeMB: 200 });
+    // 200MB should be valid (under 500MB limit)
+    const mediumFile = createMockFile({ sizeMB: 200 });
+    expect(validateFile(mediumFile).valid).toBe(true);
+    
+    // Files over 500MB should fail
+    const largeFile = createMockFile({ sizeMB: 600 });
     expect(validateFile(largeFile).valid).toBe(false);
   });
 });
@@ -172,11 +176,11 @@ describe('Processing Time Estimation', () => {
   });
 
   it('should warn when estimated time exceeds timeout', () => {
-    const largeFile = createMockFile({ sizeMB: 200, layerCount: 100 });
-    const estimate = estimateProcessingTime(largeFile);
+    // Very large file that exceeds even the restored timeout
+    const veryLargeFile = createMockFile({ sizeMB: 500, layerCount: 200, width: 8192, height: 8192 });
+    const estimate = estimateProcessingTime(veryLargeFile);
     
-    // After PERF-2847, this correctly returns false
-    // but the config should be fixed, not the expectation
+    // Extremely large files may still exceed timeout
     expect(estimate.withinTimeout).toBe(false);
   });
 });
