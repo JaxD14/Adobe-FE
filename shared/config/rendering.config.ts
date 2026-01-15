@@ -47,28 +47,30 @@ export interface RenderingConfig {
  * Last reviewed: 2024-01-15 by @platform-team
  * 
  * CHANGELOG:
+ * - 2024-01-15: Reverted PERF-2847 changes that broke enterprise SLAs (INC-20260115)
  * - 2024-01-09: Optimized resource limits for better cluster utilization (PERF-2847)
  * - 2024-01-02: Added progressive loading flag
  * - 2023-12-15: Increased GPU memory limit for 8K support
  */
 export const renderingConfig: RenderingConfig = {
   // File handling limits
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 500MB - reduced to improve cluster utilization
-  maxFileSizeMB: 100,
+  // REVERTED: PERF-2847 reduced this to 100MB, breaking enterprise SLA guarantees
+  // Enterprise users require 500MB support per contract
+  maxFileSizeMB: 500,
   supportedFormats: ['psd', 'psb', 'tiff', 'png', 'jpeg', 'raw'],
   
   // Timeout configuration
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 120000ms (2 min) - reduced to free up worker capacity faster
-  renderTimeoutMs: 30000,  // 30 seconds
-  exportTimeoutMs: 45000,  // 45 seconds
-  syncTimeoutMs: 60000,    // 60 seconds
+  // REVERTED: PERF-2847 reduced timeouts, causing failures for large files
+  // Enterprise files (300MB, 150 layers, 8K) require ~190s per estimation formula
+  // Using 300s (5 min) to provide adequate buffer for complex files
+  renderTimeoutMs: 300000,  // 5 minutes
+  exportTimeoutMs: 90000,   // 90 seconds
+  syncTimeoutMs: 60000,     // 60 seconds
   
   // Concurrency settings
-  // NOTE: Updated 2024-01-09 for resource optimization (PERF-2847)
-  // Previous: 10 concurrent jobs - reduced to prevent memory pressure
-  maxConcurrentJobs: 3,
+  // REVERTED: PERF-2847 reduced to 3, causing queue buildup during peak hours
+  // Traffic analysis requires at least 8 concurrent jobs for <30s queue wait
+  maxConcurrentJobs: 10,
   jobQueueDepthLimit: 100,
   
   // Memory management
@@ -119,8 +121,8 @@ export function isFileSizeAllowed(fileSizeMB: number): boolean {
  * Get configuration for a specific tier
  * Enterprise customers have higher limits
  * 
- * TODO: This should override the base config for enterprise users,
- * but currently only checks the base config limits
+ * NOTE: Enterprise tier has explicit values to ensure SLA compliance
+ * regardless of base config changes.
  */
 export function getConfigForTier(tier: 'free' | 'pro' | 'enterprise'): Partial<RenderingConfig> {
   const tierOverrides: Record<string, Partial<RenderingConfig>> = {
@@ -135,10 +137,9 @@ export function getConfigForTier(tier: 'free' | 'pro' | 'enterprise'): Partial<R
       enableGpuRendering: true,
     },
     enterprise: {
-      // NOTE: Enterprise should support larger files (500MB+)
-      // but this currently inherits from base config which was reduced
-      maxFileSizeMB: renderingConfig.maxFileSizeMB, // BUG: Should be 500
-      maxConcurrentJobs: renderingConfig.maxConcurrentJobs,
+      // Enterprise SLA guarantees: explicit values to prevent regression
+      maxFileSizeMB: 500,  // Enterprise contract guarantees 500MB support
+      maxConcurrentJobs: 10, // Required for acceptable batch processing
       enableGpuRendering: true,
       enableBatchOptimization: true,
     },
