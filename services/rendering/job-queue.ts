@@ -6,7 +6,7 @@
  * @owner ps-rendering-eng
  */
 
-import { renderingConfig } from '../../shared/config/rendering.config';
+import { renderingConfig, getTimeoutForFileSize } from '../../shared/config/rendering.config';
 import { createLogger } from '../../shared/utils/logger';
 import { JobStatus, ErrorCode, ServiceError } from '../../shared/types/common';
 import { RenderRequest, QueuedRenderJob, RenderResult } from './types';
@@ -131,11 +131,12 @@ class RenderJobQueue {
   /**
    * Execute job with configured timeout
    * 
-   * WARNING: Timeout was reduced in PERF-2847 from 120s to 30s
-   * Large files may timeout before rendering completes
+   * FIX: Use dynamic timeout based on file size instead of static config value.
+   * This ensures larger files get adequate time to complete rendering.
    */
   private async executeWithTimeout(job: QueuedRenderJob): Promise<RenderResult> {
-    const timeoutMs = renderingConfig.renderTimeoutMs;
+    // Use dynamic timeout that scales with file size
+    const timeoutMs = getTimeoutForFileSize(job.request.file.sizeMB, 'render');
     const requestId = job.request.requestId;
     
     logger.debug('Starting job with timeout', {
